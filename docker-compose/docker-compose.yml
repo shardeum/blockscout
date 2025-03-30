@@ -34,10 +34,11 @@ services:
     links:
       - db:database
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: https://atomium.shardeum.org/
-      ETHEREUM_JSONRPC_TRACE_URL: https://atomium.shardeum.org/
-      ETHEREUM_JSONRPC_WS_URL: ws://atomium.shardeum.org/
-      CHAIN_ID: "8082"
+      ETHEREUM_JSONRPC_HTTP_URL: http://35.193.244.85:8080/
+      ETHEREUM_JSONRPC_TRACE_URL: http://35.193.244.85:8080/
+      ETHEREUM_JSONRPC_WS_URL: wss://35.193.244.85:8080/
+      CHAIN_ID: "8083"
+      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
 
   nft_media_handler:
     depends_on:
