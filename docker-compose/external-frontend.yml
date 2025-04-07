@@ -30,7 +30,7 @@ services:
       - db:database
     environment:
         ETHEREUM_JSONRPC_VARIANT: 'geth'
-        ETHEREUM_JSONRPC_WS_URL: wss://host.docker.internal:8080/
+        ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8080/
         INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: 'true'
         INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: 'true'
         CHAIN_ID: '8083'
