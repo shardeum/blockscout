@@ -1,4 +1,4 @@
-version: "3.9"
+version: '3.9'
 
 services:
   redis-db:
@@ -34,11 +34,13 @@ services:
     links:
       - db:database
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8080/
-      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8080/
-      ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8080/
-      CHAIN_ID: "8083"
-      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
+        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8548/
+        CHAIN_ID: '8119'
+        INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
+    volumes:
+      - shardeum-evm/blockscout-genesis.json:/app/config/blockscout-genesis.json:ro
 
   # nft_media_handler:
   #   depends_on:
