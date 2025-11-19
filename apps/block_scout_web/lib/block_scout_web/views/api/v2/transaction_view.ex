@@ -479,7 +479,11 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
       "transaction_tag" =>
         GetTransactionTags.get_transaction_tags(transaction.hash, current_user(single_transaction? && conn)),
       "has_error_in_internal_transactions" => transaction.has_error_in_internal_transactions,
-      "authorization_list" => authorization_list(transaction.signed_authorizations)
+      "authorization_list" => authorization_list(transaction.signed_authorizations),
+      # Cosmos transaction support
+      "transaction_type" => transaction.transaction_type,
+      "cosmos_data" => transaction.cosmos_data,
+      "alt_hash" => transaction.alt_hash
     }
 
     result

@@ -1,4 +1,4 @@
-version: "3.9"
+version: '3.9'
 
 services:
   redis-db:
@@ -34,12 +34,14 @@ services:
     links:
       - db:database
     environment:
-      ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8080/
-      ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8080/
-      ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8080/
-      CHAIN_ID: "8083"
-      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
-
+        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_TRACE_URL: http://host.docker.internal:8547/
+        ETHEREUM_JSONRPC_WS_URL: ws://host.docker.internal:8548/
+        CHAIN_ID: '8117'
+        INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: "true"
+        COSMOS_RPC_URL: http://host.docker.internal:26657
+        COSMOS_TRANSACTION_MONITOR_ENABLED: "true"
+        COSMOS_DASHBOARD_API_URL: http://host.docker.internal:3001
   # nft_media_handler:
   #   depends_on:
   #     - backend

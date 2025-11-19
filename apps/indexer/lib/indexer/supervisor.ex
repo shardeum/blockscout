@@ -33,6 +33,7 @@ defmodule Indexer.Supervisor do
   alias Indexer.Fetcher.{
     BlockReward,
     ContractCode,
+    CosmosTransaction,
     EmptyBlocksSanitizer,
     InternalTransaction,
     PendingBlockOperationsSanitizer,
@@ -235,6 +236,13 @@ defmodule Indexer.Supervisor do
         {EmptyBlocksSanitizer.Supervisor, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
         {PendingTransactionsSanitizer, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
         {TokenTotalSupplyUpdater, [[]]},
+        # Cosmos transaction fetcher
+        configure(CosmosTransaction, [
+          [
+            poll_interval: Application.get_env(:indexer, CosmosTransaction)[:poll_interval],
+            batch_size: Application.get_env(:indexer, CosmosTransaction)[:batch_size]
+          ]
+        ]),
 
         # Temporary workers
         {UncatalogedTokenTransfers.Supervisor, [[]]},

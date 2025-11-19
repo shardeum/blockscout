@@ -817,6 +817,14 @@ config :indexer, Indexer.Fetcher.OnDemand.TokenInstanceMetadataRefetch,
 config :indexer, Indexer.Fetcher.BlockReward.Supervisor,
   disabled?: ConfigHelper.parse_bool_env_var("INDEXER_DISABLE_BLOCK_REWARD_FETCHER")
 
+config :indexer, Indexer.Fetcher.CosmosTransaction,
+  enabled: !ConfigHelper.parse_bool_env_var("INDEXER_DISABLE_COSMOS_TRANSACTION_FETCHER"),
+  poll_interval: ConfigHelper.parse_time_env_var("INDEXER_COSMOS_TRANSACTION_POLL_INTERVAL", "5s"),
+  batch_size: ConfigHelper.parse_integer_env_var("INDEXER_COSMOS_TRANSACTION_BATCH_SIZE", 100)
+
+config :indexer, Indexer.Fetcher.Cosmos.DashboardAPIClient,
+  base_url: System.get_env("COSMOS_DASHBOARD_API_URL", "http://localhost:3001")
+
 config :indexer, Indexer.Fetcher.InternalTransaction.Supervisor,
   disabled?: trace_url_missing? or ConfigHelper.parse_bool_env_var("INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER")
 
