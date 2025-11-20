@@ -2211,6 +2211,22 @@ defmodule Explorer.Chain do
     select_repo(options).one!(query)
   end
 
+  @doc """
+  Gets the maximum EVM block number, excluding Cosmos synthetic blocks.
+  Cosmos blocks use a 1 billion offset (e.g., 1_000_000_076 for Cosmos block 76).
+  This function is used for calculating confirmations to avoid skewed numbers.
+  """
+  @spec evm_block_height(Keyword.t()) :: block_height()
+  def evm_block_height(options \\ []) do
+    # Exclude Cosmos synthetic blocks which have numbers >= 1 billion
+    query = from(block in Block,
+      select: coalesce(max(block.number), 0),
+      where: block.consensus == true and block.number < 1_000_000_000
+    )
+
+    select_repo(options).one!(query)
+  end
+
   def indexer_running? do
     Application.get_env(:indexer, Indexer.Supervisor)[:enabled] or match?({:ok, _, _}, last_db_block_status())
   end

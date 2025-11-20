@@ -107,6 +107,25 @@ defmodule Indexer.Fetcher.Cosmos.DashboardAPIClient do
   end
 
   @doc """
+  Fetches account balance from the dashboard indexer.
+
+  ## Parameters
+  - `address` - The address to fetch balance for (Cosmos bech32 format)
+
+  ## Returns
+  - `{:ok, list()}`: List of balance objects [{denom, amount}]
+  - `{:error, reason}`: Error tuple
+  """
+  @spec fetch_account_balance(binary()) :: {:ok, list(map())} | {:error, term()}
+  def fetch_account_balance(address) when is_binary(address) do
+    url = build_url("/api/v1/accounts/#{address}/balances")
+
+    with {:ok, data} <- do_get(url) do
+      {:ok, data}
+    end
+  end
+
+  @doc """
   Health check for the dashboard API.
 
   ## Returns

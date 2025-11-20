@@ -480,6 +480,20 @@ defmodule BlockScoutWeb.TransactionView do
 
   def transaction_display_type(%Transaction{} = transaction) do
     cond do
+      # Handle Cosmos transactions first
+      transaction.transaction_type == :cosmos ->
+        cosmos_data = transaction.cosmos_data || %{}
+        cosmos_type = Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type)
+        category = Map.get(cosmos_data, "category") || Map.get(cosmos_data, :category)
+
+        cond do
+          cosmos_type -> cosmos_type  # Use the specific type like "Delegate", "Submit Proposal"
+          category == "staking" -> gettext("Staking")
+          category == "governance" -> gettext("Governance")
+          category == "ibc" -> gettext("IBC Transfer")
+          true -> gettext("Cosmos Transfer")
+        end
+
       involves_token_transfers?(transaction) ->
         token_transfer_type = get_transaction_type_from_token_transfers(transaction.token_transfers)
 
@@ -503,6 +517,17 @@ defmodule BlockScoutWeb.TransactionView do
 
   def type_suffix(%Transaction{} = transaction) do
     cond do
+      transaction.transaction_type == :cosmos ->
+        cosmos_data = transaction.cosmos_data || %{}
+        category = Map.get(cosmos_data, "category") || Map.get(cosmos_data, :category)
+
+        case category do
+          "staking" -> "cosmos-staking"
+          "governance" -> "cosmos-governance"
+          "ibc" -> "cosmos-ibc"
+          _ -> "cosmos-transfer"
+        end
+
       involves_token_transfers?(transaction) -> "token-transfer"
       contract_creation?(transaction) -> "contract-creation"
       involves_contract?(transaction) -> "contract-call"

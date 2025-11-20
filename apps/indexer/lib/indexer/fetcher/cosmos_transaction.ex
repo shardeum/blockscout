@@ -9,6 +9,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
   require Logger
 
   import Ecto.Query
+  import Bitwise
 
   alias Explorer.Chain
   alias Explorer.Chain.{Address, Block, Hash, Transaction}
@@ -206,15 +207,22 @@ defmodule Indexer.Fetcher.CosmosTransaction do
       {:ok, hash} = parse_hash(tx["hash"])
       alt_hash = if tx["evmHash"], do: parse_hash(tx["evmHash"]) |> elem(1), else: nil
 
-      # Parse addresses
-      from_hash = parse_address(tx["fromAddress"] || tx["from"])
-      to_hash = parse_address(tx["toAddress"] || tx["to"])
-
-      # Skip transactions without from_address (required by Blockscout)
-      if is_nil(from_hash) do
-        {:error, "from_address is required"}
+      # Skip if an EVM transaction with the same hash already exists
+      # This prevents duplicate display of native transfers that are indexed by both
+      # the EVM indexer and the Cosmos fetcher
+      if alt_hash && evm_transaction_exists?(alt_hash) do
+        {:error, "EVM transaction already exists with hash #{alt_hash}"}
       else
-        process_transaction(tx, hash, alt_hash, from_hash, to_hash)
+        # Parse addresses
+        from_hash = parse_address(tx["fromAddress"] || tx["from"])
+        to_hash = parse_address(tx["toAddress"] || tx["to"])
+
+        # Skip transactions without from_address (required by Blockscout)
+        if is_nil(from_hash) do
+          {:error, "from_address is required"}
+        else
+          process_transaction(tx, hash, alt_hash, from_hash, to_hash)
+        end
       end
     rescue
       e ->
@@ -223,10 +231,21 @@ defmodule Indexer.Fetcher.CosmosTransaction do
     end
   end
 
+  # Check if an EVM transaction with the given hash already exists in the database
+  defp evm_transaction_exists?(hash) do
+    Repo.exists?(from t in Transaction, where: t.hash == ^hash)
+  end
+
   defp process_transaction(tx, hash, alt_hash, from_hash, to_hash) do
-    # Parse amounts (convert from ashm to Wei - both use 18 decimals)
+    # Parse amounts
+    # Dashboard API returns:
+    # - "amount" as string (human readable, e.g., "0.111000")
+    # - "feeAmount" as raw ashm integer (e.g., 287981000000000000000)
+    # - "fee" as string (human readable, e.g., "0.287981")
+    # Use the human readable versions and convert to Wei
     amount_wei = parse_amount(tx["amount"])
-    fee_wei = parse_amount(tx["feeAmount"] || tx["fee"])
+    # Use "fee" (human readable string) instead of "feeAmount" (raw ashm)
+    fee_wei = parse_amount(tx["fee"])
 
       # Parse gas values
       gas_wanted = parse_integer(tx["gasWanted"]) || 0
@@ -261,7 +280,9 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         value: amount_wei,
         gas: gas_wanted,
         gas_used: gas_used,
-        gas_price: if(gas_wanted > 0, do: Decimal.div(fee_wei, gas_wanted), else: 0),
+        # Calculate gas_price using gas_used so that displayed fee (gas_price * gas_used) = actual fee
+        # Blockscout displays fee as gas_price * gas_used, so we need to ensure this equals the actual fee paid
+        gas_price: if(gas_used > 0, do: Decimal.div(fee_wei, gas_used), else: 0),
         status: status,
         # Cosmos-specific data stored as JSON
         cosmos_data: %{
@@ -270,9 +291,14 @@ defmodule Indexer.Fetcher.CosmosTransaction do
           category: tx["category"],
           type: tx["type"],
           fee_denom: tx["feeDenom"] || tx["denom"] || "ashm",
+          fee_amount_raw: tx["feeAmount"],  # Raw fee in ashm for display
+          fee_amount_shm: tx["fee"],  # Human readable fee in SHM
           timestamp: tx["timestamp"],
           cosmos_height: cosmos_height,  # Original Cosmos block height
-          original_to_address: tx["toAddress"] || tx["to"],  # Store original to address
+          original_from_address: tx["fromAddress"] || tx["from"],  # Original Cosmos from address
+          original_to_address: tx["toAddress"] || tx["to"],  # Original Cosmos to address
+          gas_wanted: gas_wanted,
+          gas_used: gas_used,
           data: tx["data"]
         },
         # Set EVM fields - use dummy values for r,s,v since they're NOT NULL in DB
@@ -296,15 +322,18 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         |> Enum.reject(&is_nil/1)
 
       # Build balance update params
-      # Important: Don't include block_number here, we'll add it later with the actual latest block
-      # This is because we need to fetch balances from the EVM chain at the current block,
-      # not at the synthetic Cosmos block number
+      # Include both EVM address hash and original Cosmos address for balance fetching
+      from_cosmos_addr = tx["fromAddress"] || tx["from"]
+      to_cosmos_addr = tx["toAddress"] || tx["to"]
+
       balance_params =
         [
           # Always include from_address for balance fetch
-          %{address_hash: from_hash},
+          %{address_hash: from_hash, cosmos_address: from_cosmos_addr},
           # Include to_address if it's different from from_address
-          if(to_hash && to_hash != from_hash, do: %{address_hash: to_hash}, else: nil)
+          if(to_hash && to_hash != from_hash,
+            do: %{address_hash: to_hash, cosmos_address: to_cosmos_addr},
+            else: nil)
         ]
         |> Enum.reject(&is_nil/1)
 
@@ -322,29 +351,80 @@ defmodule Indexer.Fetcher.CosmosTransaction do
   end
 
   defp update_balances(balance_params) do
-    # For Cosmos transactions, we need to fetch the balance from the actual EVM/Cosmos chain
-    # We'll use a high block number that's beyond any realistic block to force fetching "latest"
-    # This is a workaround since the balance fetcher expects a block number
+    # For Cosmos transactions, fetch balances from the Cosmos chain via Dashboard API
+    # This ensures we get accurate balances for Cosmos addresses
 
-    # Get the maximum block number from the EVM chain (not Cosmos synthetic blocks)
-    latest_block_number = get_latest_evm_block_number()
-
-    Logger.info("Fetching Cosmos address balances at EVM block: #{latest_block_number}")
+    Logger.info("Fetching Cosmos address balances from dashboard API")
 
     # Deduplicate by address and fetch balances
     balance_params
     |> Enum.uniq_by(fn %{address_hash: addr} -> addr end)
     |> Enum.each(fn params ->
-      # Use the latest EVM block number for balance fetching
-      fetch_params = Map.put(params, :block_number, latest_block_number)
+      cosmos_address = params[:cosmos_address]
+      address_hash = params.address_hash
 
-      Logger.debug("Queueing balance fetch for address #{inspect(fetch_params.address_hash)} at block #{fetch_params.block_number}")
+      if cosmos_address && String.starts_with?(cosmos_address, "shardeum") do
+        # Fetch balance from Dashboard API for Cosmos addresses
+        case DashboardAPIClient.fetch_account_balance(cosmos_address) do
+          {:ok, balances} when is_list(balances) ->
+            # Find ashm balance
+            ashm_balance =
+              Enum.find(balances, fn b -> b["denom"] == "ashm" end)
+              |> case do
+                nil -> 0
+                %{"amount" => amount} when is_binary(amount) ->
+                  case Integer.parse(amount) do
+                    {val, _} -> val
+                    :error -> 0
+                  end
+                _ -> 0
+              end
 
-      # Async fetch the actual balance from the chain
-      CoinBalance.Catchup.async_fetch_balances([fetch_params])
+            Logger.debug("Cosmos balance for #{cosmos_address}: #{ashm_balance} ashm")
+
+            # Update the address balance directly in Blockscout
+            update_address_balance(address_hash, ashm_balance)
+
+          {:error, reason} ->
+            Logger.warning("Failed to fetch Cosmos balance for #{cosmos_address}: #{inspect(reason)}")
+            # Fall back to EVM balance fetcher
+            fallback_evm_balance_fetch(address_hash)
+        end
+      else
+        # For EVM addresses, use the standard balance fetcher
+        fallback_evm_balance_fetch(address_hash)
+      end
     end)
 
     :ok
+  end
+
+  defp update_address_balance(address_hash, balance_wei) when is_integer(balance_wei) do
+    # Update the address record with the fetched balance
+    case Repo.get_by(Address, hash: address_hash) do
+      nil ->
+        Logger.warning("Address not found for balance update: #{inspect(address_hash)}")
+
+      address ->
+        changeset = Address.balance_changeset(address, %{
+          fetched_coin_balance: balance_wei,
+          fetched_coin_balance_block_number: get_latest_evm_block_number()
+        })
+
+        case Repo.update(changeset) do
+          {:ok, _updated} ->
+            Logger.debug("Updated balance for #{inspect(address_hash)}: #{balance_wei}")
+
+          {:error, error} ->
+            Logger.error("Failed to update balance for #{inspect(address_hash)}: #{inspect(error)}")
+        end
+    end
+  end
+
+  defp fallback_evm_balance_fetch(address_hash) do
+    latest_block_number = get_latest_evm_block_number()
+    fetch_params = %{address_hash: address_hash, block_number: latest_block_number}
+    CoinBalance.Catchup.async_fetch_balances([fetch_params])
   end
 
   defp get_latest_evm_block_number do
@@ -402,19 +482,85 @@ defmodule Indexer.Fetcher.CosmosTransaction do
           _ -> nil
         end
 
-      # Shardeum Cosmos address (shardeum prefix) - create deterministic EVM address from it
+      # Shardeum Cosmos address (shardeum prefix) - decode bech32 to get EVM address
+      # In Ethermint, Cosmos bech32 and EVM hex addresses share the same 20 bytes
       String.starts_with?(address_string, "shardeum") ->
-        # Use first 20 bytes of SHA256 hash of the Cosmos address
-        hash_bytes = :crypto.hash(:sha256, address_string) |> binary_part(0, 20)
-
-        case Hash.cast(Hash.Address, hash_bytes) do
-          {:ok, hash} -> hash
+        case decode_bech32_address(address_string) do
+          {:ok, address_bytes} ->
+            case Hash.cast(Hash.Address, address_bytes) do
+              {:ok, hash} -> hash
+              _ -> nil
+            end
           _ -> nil
         end
 
       true ->
         nil
     end
+  end
+
+  # Decode a bech32 Cosmos address to its underlying 20-byte address
+  # This is the same address used in EVM format
+  defp decode_bech32_address(bech32_address) do
+    try do
+      # Split the address at "1" separator
+      case String.split(bech32_address, "1", parts: 2) do
+        [_hrp, data_part] ->
+          # Decode the base32 data (bech32 charset)
+          charset = ~c"qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+          # Remove the 6-character checksum from the end
+          data_chars = String.to_charlist(data_part)
+          data_without_checksum = Enum.take(data_chars, length(data_chars) - 6)
+
+          # Convert from bech32 charset to 5-bit values
+          five_bit_values = Enum.map(data_without_checksum, fn char ->
+            Enum.find_index(charset, &(&1 == char))
+          end)
+
+          # Convert from 5-bit to 8-bit (the address bytes)
+          address_bytes = convert_bits(five_bit_values, 5, 8, false)
+
+          {:ok, :binary.list_to_bin(address_bytes)}
+        _ ->
+          {:error, :invalid_format}
+      end
+    rescue
+      _ -> {:error, :decode_failed}
+    end
+  end
+
+  # Convert between bit sizes (used for bech32 decoding)
+  defp convert_bits(data, from_bits, to_bits, pad) do
+    acc = 0
+    bits = 0
+    max_v = (1 <<< to_bits) - 1
+
+    {result, acc, bits} = Enum.reduce(data, {[], acc, bits}, fn value, {result, acc, bits} ->
+      acc = (acc <<< from_bits) ||| value
+      bits = bits + from_bits
+
+      {new_result, new_acc, new_bits} = extract_bits(result, acc, bits, to_bits, max_v)
+      {new_result, new_acc, new_bits}
+    end)
+
+    result = if pad and bits > 0 do
+      result ++ [(acc <<< (to_bits - bits)) &&& max_v]
+    else
+      result
+    end
+
+    result
+  end
+
+  defp extract_bits(result, acc, bits, to_bits, max_v) when bits >= to_bits do
+    bits = bits - to_bits
+    value = (acc >>> bits) &&& max_v
+    extract_bits(result ++ [value], acc, bits, to_bits, max_v)
+  end
+
+  defp extract_bits(result, acc, bits, _to_bits, _max_v) do
+    {result, acc, bits}
   end
 
   defp create_synthetic_block_hash(block_number) when is_integer(block_number) do
