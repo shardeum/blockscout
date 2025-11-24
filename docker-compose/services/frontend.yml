@@ -2,10 +2,7 @@ version: '3.9'
 
 services:
   frontend:
-    build:
-      context: ../../../blockscout-frontend
-      dockerfile: Dockerfile
-    platform: linux/amd64
+    image: blockscout/frontend:latest
     restart: always
     container_name: 'frontend'
     env_file:
