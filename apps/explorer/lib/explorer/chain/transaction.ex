@@ -1710,8 +1710,9 @@ defmodule Explorer.Chain.Transaction do
   end
 
   defp order_for_transactions(query, _) do
+    # Sort by inserted_at first to ensure proper chronological ordering
     query
-    |> order_by([transaction], desc: transaction.block_number, desc: transaction.index)
+    |> order_by([transaction], desc: transaction.inserted_at, desc: transaction.block_number, desc: transaction.index)
   end
 
   @doc """

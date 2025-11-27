@@ -332,32 +332,41 @@ defmodule Explorer.Chain.Address.Counters do
         address_to_validation_count(address.hash, options)
       end)
 
-    Task.start_link(fn ->
-      transaction_count(address)
-    end)
+    # Use Task.async instead of Task.start_link to await results
+    transaction_count_task =
+      Task.async(fn ->
+        transaction_count(address)
+      end)
 
-    Task.start_link(fn ->
-      token_transfers_count(address)
-    end)
+    token_transfers_count_task =
+      Task.async(fn ->
+        token_transfers_count(address)
+      end)
 
-    Task.start_link(fn ->
-      gas_usage_count(address)
-    end)
+    gas_usage_count_task =
+      Task.async(fn ->
+        gas_usage_count(address)
+      end)
 
     [
-      validation_count_task
+      validation_count_task,
+      transaction_count_task,
+      token_transfers_count_task,
+      gas_usage_count_task
     ]
-    |> Task.yield_many(:infinity)
+    |> Task.yield_many(:timer.seconds(5))
     |> Enum.map(fn {_task, res} ->
       case res do
         {:ok, result} ->
           result
 
         {:exit, reason} ->
-          raise "Query fetching address counters terminated: #{inspect(reason)}"
+          Logger.warning("Query fetching address counters terminated: #{inspect(reason)}")
+          nil
 
         nil ->
-          raise "Query fetching address counters timed out."
+          Logger.warning("Query fetching address counters timed out.")
+          nil
       end
     end)
     |> List.to_tuple()

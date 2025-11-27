@@ -13,6 +13,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
 
   alias Explorer.Chain
   alias Explorer.Chain.{Address, Block, Hash, Transaction}
+  alias Explorer.Chain.Events.Publisher
   alias Explorer.Repo
   alias Indexer.Fetcher.Cosmos.DashboardAPIClient
   alias Indexer.Fetcher.CoinBalance
@@ -173,6 +174,12 @@ defmodule Indexer.Fetcher.CosmosTransaction do
           case import_transactions(blockscout_transactions) do
             {:ok, tx_result} ->
               Logger.info("Transaction import succeeded: #{inspect(tx_result)}")
+
+              # Broadcast transactions event for real-time websocket updates
+              imported_txs = Map.get(tx_result, :transactions, [])
+              if length(imported_txs) > 0 do
+                Publisher.broadcast([{:transactions, imported_txs}], :realtime)
+              end
 
               case update_balances(balance_updates) do
                 :ok ->
