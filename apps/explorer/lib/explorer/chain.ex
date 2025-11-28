@@ -1626,10 +1626,11 @@ defmodule Explorer.Chain do
 
   @spec fetch_min_block_number() :: non_neg_integer
   def fetch_min_block_number do
+    # Exclude Cosmos synthetic blocks (number >= 1 billion)
     query =
       from(block in Block,
         select: block.number,
-        where: block.consensus == true,
+        where: block.consensus == true and block.number < 1_000_000_000,
         order_by: [asc: block.number],
         limit: 1
       )
@@ -1642,10 +1643,11 @@ defmodule Explorer.Chain do
 
   @spec fetch_max_block_number() :: non_neg_integer
   def fetch_max_block_number do
+    # Exclude Cosmos synthetic blocks (number >= 1 billion)
     query =
       from(block in Block,
         select: block.number,
-        where: block.consensus == true,
+        where: block.consensus == true and block.number < 1_000_000_000,
         order_by: [desc: block.number],
         limit: 1
       )
@@ -2206,7 +2208,11 @@ defmodule Explorer.Chain do
 
   @spec block_height() :: block_height()
   def block_height(options \\ []) do
-    query = from(block in Block, select: coalesce(max(block.number), 0), where: block.consensus == true)
+    # Exclude Cosmos synthetic blocks (number >= 1 billion)
+    query = from(block in Block,
+      select: coalesce(max(block.number), 0),
+      where: block.consensus == true and block.number < 1_000_000_000
+    )
 
     select_repo(options).one!(query)
   end
@@ -2237,10 +2243,11 @@ defmodule Explorer.Chain do
   end
 
   def last_db_block_status do
+    # Exclude Cosmos synthetic blocks (number >= 1 billion)
     query =
       from(block in Block,
         select: {block.number, block.timestamp},
-        where: block.consensus == true,
+        where: block.consensus == true and block.number < 1_000_000_000,
         order_by: [desc: block.number],
         limit: 1
       )
