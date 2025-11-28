@@ -2129,7 +2129,7 @@ defmodule Explorer.Chain.Transaction do
   def method_name(_, _, skip_sc_check? \\ false)
 
   def method_name(_, {:ok, _method_id, text, _mapping}, _) do
-    parse_method_name(text, false)
+    parse_method_name(text, true)
   end
 
   def method_name(

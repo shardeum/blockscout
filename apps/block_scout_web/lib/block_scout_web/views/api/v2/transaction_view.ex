@@ -519,10 +519,8 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
     capitalize_cosmos_type(type)
   end
 
-  # Capitalize the first letter of Cosmos transaction types for consistent display
-  defp capitalize_cosmos_type(type) when is_binary(type) and byte_size(type) > 0 do
-    String.capitalize(type)
-  end
+  # Capitalize only the first letter of Cosmos transaction types for consistent display
+  defp capitalize_cosmos_type(<<first::utf8, rest::binary>>), do: String.upcase(<<first::utf8>>) <> rest
 
   defp capitalize_cosmos_type(type), do: type
 
