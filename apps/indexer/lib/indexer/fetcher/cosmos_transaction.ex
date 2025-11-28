@@ -127,44 +127,61 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         end
       end)
 
-    # Extract unique blocks from transactions with real Cosmos data
+    # Extract unique blocks from transactions
     blocks =
       blockscout_transactions
       |> Enum.map(fn tx ->
-        # Extract Cosmos block timestamp from cosmos_data
-        cosmos_timestamp =
-          case tx.cosmos_data do
-            %{timestamp: ts} when is_binary(ts) ->
-              case DateTime.from_iso8601(ts) do
-                {:ok, dt, _} -> dt
-                _ -> tx.inserted_at
-              end
-            _ -> tx.inserted_at
-          end
+        # Check if EVM block already exists at this height
+        evm_block_exists = case get_evm_block_at_height(tx.block_number) do
+          {:ok, _} -> true
+          :not_found -> false
+        end
 
-        %{
-          number: tx.block_number,
-          hash: tx.block_hash,
-          timestamp: cosmos_timestamp,
-          consensus: true,
-          gas_used: tx.cumulative_gas_used || 0,
-          gas_limit: (tx.cumulative_gas_used || 0) + 1000000,  # Add some headroom
-          parent_hash: create_synthetic_block_hash(max(0, tx.block_number - 1)),
-          miner_hash: tx.from_address_hash,
-          nonce: tx.block_number,  # Use Cosmos block height as nonce
-          size: 0,  # Cosmos doesn't track block size the same way
-          difficulty: 0,  # Cosmos uses PoS, no difficulty
-          total_difficulty: 0  # Cosmos uses PoS, no difficulty
-        }
+        if evm_block_exists do
+          nil
+        else
+          # Extract Cosmos block timestamp from cosmos_data
+          cosmos_timestamp =
+            case tx.cosmos_data do
+              %{timestamp: ts} when is_binary(ts) ->
+                case DateTime.from_iso8601(ts) do
+                  {:ok, dt, _} -> dt
+                  _ -> tx.inserted_at
+                end
+              _ -> tx.inserted_at
+            end
+
+          %{
+            number: tx.block_number,
+            hash: tx.block_hash,
+            timestamp: cosmos_timestamp,
+            consensus: true,
+            gas_used: tx.cumulative_gas_used || 0,
+            gas_limit: (tx.cumulative_gas_used || 0) + 1000000,  # Add some headroom
+            parent_hash: create_synthetic_block_hash(max(0, tx.block_number - 1)),
+            miner_hash: tx.from_address_hash,
+            nonce: tx.block_number,  # Use Cosmos block height as nonce
+            size: 0,  # Cosmos doesn't track block size the same way
+            difficulty: 0,  # Cosmos uses PoS, no difficulty
+            total_difficulty: 0  # Cosmos uses PoS, no difficulty
+          }
+        end
       end)
+      |> Enum.reject(&is_nil/1)
       |> Enum.uniq_by(& &1.number)
 
     Logger.info("Creating #{length(blocks)} Cosmos blocks, #{length(blockscout_transactions)} transactions")
     Logger.info("First block: #{inspect(Enum.at(blocks, 0))}")
     Logger.info("First tx: #{inspect(Enum.at(blockscout_transactions, 0))}")
 
-    # Import blocks, addresses, transactions, and balances
-    with {:ok, block_result} <- Chain.import(%{blocks: %{params: blocks}}) do
+    # Import blocks with on_conflict: :nothing to avoid overwriting EVM blocks
+    block_import_result = if length(blocks) > 0 do
+      Chain.import(%{blocks: %{params: blocks, on_conflict: :nothing}})
+    else
+      {:ok, %{}}
+    end
+
+    with {:ok, block_result} <- block_import_result do
       Logger.info("Block import succeeded: #{inspect(block_result)}")
 
       case Chain.import(%{addresses: %{params: addresses}}) do
@@ -257,16 +274,18 @@ defmodule Indexer.Fetcher.CosmosTransaction do
       # Parse gas values
       gas_wanted = parse_integer(tx["gasWanted"]) || 0
       gas_used = parse_integer(tx["gasUsed"]) || 0
-
-      # Parse Cosmos block number and add offset to avoid conflicts with EVM blocks
-      # Use a high offset (1 billion) to ensure Cosmos blocks don't overlap with EVM blocks
-      # This prevents Cosmos transactions from being overwritten by EVM blocks
       cosmos_height = parse_integer(tx["height"]) || 0
-      cosmos_block_number = 1_000_000_000 + cosmos_height
 
-      # Create synthetic block hash from Cosmos block number
-      # This allows transactions to show as confirmed while maintaining referential integrity
-      block_hash = create_synthetic_block_hash(cosmos_block_number)
+      # Check if EVM block already exists at this height - use its hash if so
+      # This avoids creating duplicate blocks when EVM blocks are available
+      block_hash = case get_evm_block_at_height(cosmos_height) do
+        {:ok, evm_hash} ->
+          Logger.debug("Using existing EVM block hash for Cosmos tx at height #{cosmos_height}")
+          evm_hash
+        :not_found ->
+          # No EVM block yet, create synthetic hash
+          create_synthetic_block_hash(cosmos_height)
+      end
 
       # Determine status - use 1 for success (Cosmos transactions from dashboard are confirmed)
       status = 1
@@ -280,7 +299,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         hash: hash,
         transaction_type: :cosmos,
         alt_hash: alt_hash,
-        block_number: cosmos_block_number,
+        block_number: cosmos_height,
         block_hash: block_hash,
         from_address_hash: from_hash,
         to_address_hash: effective_to_hash,
@@ -435,11 +454,10 @@ defmodule Indexer.Fetcher.CosmosTransaction do
   end
 
   defp get_latest_evm_block_number do
-    # Query the latest REAL block number (not Cosmos synthetic blocks)
-    # Cosmos blocks start at 1,000,000,000 so we exclude those
+    # Query the latest EVM block number
     query =
       from(b in Block,
-        where: b.consensus == true and b.number < 1_000_000_000,
+        where: b.consensus == true,
         order_by: [desc: b.number],
         limit: 1,
         select: b.number
@@ -447,19 +465,40 @@ defmodule Indexer.Fetcher.CosmosTransaction do
 
     case Repo.one(query) do
       nil ->
-        # If no EVM blocks exist yet, use block 0 (genesis)
-        # The balance fetcher will fetch at the current state
-        Logger.warning("No EVM blocks found, using block 0 for balance fetch")
+        # If no blocks exist yet, use block 0 (genesis)
+        Logger.warning("No blocks found, using block 0 for balance fetch")
         0
 
       block_number ->
-        Logger.debug("Latest EVM block number: #{block_number}")
+        Logger.debug("Latest block number: #{block_number}")
         block_number
     end
   rescue
     error ->
-      Logger.error("Error getting latest EVM block: #{inspect(error)}")
+      Logger.error("Error getting latest block: #{inspect(error)}")
       0
+  end
+
+  @doc """
+  Gets the EVM block hash at a given block number if it exists.
+  Returns {:ok, hash} if found, :not_found otherwise.
+  """
+  defp get_evm_block_at_height(block_number) do
+    query =
+      from(b in Block,
+        where: b.consensus == true and b.number == ^block_number,
+        select: b.hash,
+        limit: 1
+      )
+
+    case Repo.one(query) do
+      nil -> :not_found
+      hash -> {:ok, hash}
+    end
+  rescue
+    error ->
+      Logger.error("Error getting EVM block at height #{block_number}: #{inspect(error)}")
+      :not_found
   end
 
   defp parse_hash(hash_string) when is_binary(hash_string) do

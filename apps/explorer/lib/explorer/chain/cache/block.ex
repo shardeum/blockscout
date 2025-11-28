@@ -102,11 +102,10 @@ defmodule Explorer.Chain.Cache.Block do
 
   @spec fetch_count_consensus_block() :: non_neg_integer
   defp fetch_count_consensus_block do
-    # Exclude Cosmos synthetic blocks (number >= 1 billion) from count
     query =
       from(block in Block,
         select: count(block.hash),
-        where: block.consensus == true and block.number < 1_000_000_000
+        where: block.consensus == true
       )
 
     Repo.one!(query, timeout: :infinity) || 0

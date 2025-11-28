@@ -427,10 +427,9 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
 
     {display_block_number, formatted_confirmations} =
       if transaction.transaction_type == :cosmos do
-        # For Cosmos transactions, use the original Cosmos height from cosmos_data
         cosmos_height = get_in(transaction.cosmos_data || %{}, ["cosmos_height"]) ||
                         get_in(transaction.cosmos_data || %{}, [:cosmos_height]) ||
-                        (transaction.block_number - 1_000_000_000)
+                        transaction.block_number
 
         # Calculate confirmations using unified block height (same chain)
         cosmos_confirmations = max(1, unified_block_height - cosmos_height + 1)
