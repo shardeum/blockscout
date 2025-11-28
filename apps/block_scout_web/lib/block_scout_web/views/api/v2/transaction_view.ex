@@ -513,9 +513,18 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
   end
 
   # For Cosmos transactions, use the type from cosmos_data as the method name
+  # Normalize to capitalize first letter for consistent display (e.g., "send" -> "Send")
   defp cosmos_method_or_default(%Transaction{transaction_type: :cosmos, cosmos_data: cosmos_data}, _decoded_input) when is_map(cosmos_data) do
-    Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type) || "Cosmos Transfer"
+    type = Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type) || "Cosmos Transfer"
+    capitalize_cosmos_type(type)
   end
+
+  # Capitalize the first letter of Cosmos transaction types for consistent display
+  defp capitalize_cosmos_type(type) when is_binary(type) and byte_size(type) > 0 do
+    String.capitalize(type)
+  end
+
+  defp capitalize_cosmos_type(type), do: type
 
   defp cosmos_method_or_default(transaction, decoded_input) do
     Transaction.method_name(transaction, decoded_input)
