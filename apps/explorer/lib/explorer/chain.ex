@@ -2218,7 +2218,7 @@ defmodule Explorer.Chain do
   def evm_block_height(options \\ []) do
     query = from(block in Block,
       select: coalesce(max(block.number), 0),
-      where: block.consensus == true and block.number < 1_000_000_000
+      where: block.consensus == true
     )
 
     select_repo(options).one!(query)
