@@ -2213,7 +2213,6 @@ defmodule Explorer.Chain do
 
   @doc """
   Gets the maximum EVM block number
-  This function is used for calculating confirmations to avoid skewed numbers.
   """
   @spec evm_block_height(Keyword.t()) :: block_height()
   def evm_block_height(options \\ []) do

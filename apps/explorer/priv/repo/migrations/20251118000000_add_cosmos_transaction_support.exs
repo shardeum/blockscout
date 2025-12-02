@@ -102,7 +102,6 @@ defmodule Explorer.Repo.Migrations.AddCosmosTransactionSupport do
   end
 
   def down do
-    # Remove constraints
     execute("""
     ALTER TABLE transactions DROP CONSTRAINT IF EXISTS evm_signature_fields;
     """)
@@ -132,18 +131,15 @@ defmodule Explorer.Repo.Migrations.AddCosmosTransactionSupport do
     ALTER TABLE transactions ALTER COLUMN gas_price SET NOT NULL;
     """)
 
-    # Remove indexes
     drop(index(:transactions, :alt_hash))
     drop(index(:transactions, :transaction_type))
 
-    # Remove columns
     alter table(:transactions) do
       remove(:alt_hash)
       remove(:cosmos_data)
       remove(:transaction_type)
     end
 
-    # Drop type
     execute("""
     DROP TYPE transaction_type;
     """)

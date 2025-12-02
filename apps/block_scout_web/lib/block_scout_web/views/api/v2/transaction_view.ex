@@ -420,9 +420,7 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
 
     decoded_input_data = decoded_input(decoded_input)
 
-    # Handle Cosmos transactions specially for block number and confirmations
-    # In a unified Shardeum network, EVM and Cosmos blocks are the same chain
-    # Use EVM block height as the single source of truth for confirmations
+    # Handle Cosmos transactions
     unified_block_height = Chain.evm_block_height(@api_true)
 
     {display_block_number, formatted_confirmations} =
@@ -431,12 +429,10 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
                         get_in(transaction.cosmos_data || %{}, [:cosmos_height]) ||
                         transaction.block_number
 
-        # Calculate confirmations using unified block height (same chain)
         cosmos_confirmations = max(1, unified_block_height - cosmos_height + 1)
 
         {cosmos_height, cosmos_confirmations}
       else
-        # For EVM transactions, use the same unified block height
         evm_confirmations = transaction.block |> Chain.confirmations(block_height: unified_block_height) |> format_confirmations()
         {transaction.block_number, evm_confirmations}
       end
@@ -512,13 +508,11 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
   end
 
   # For Cosmos transactions, use the type from cosmos_data as the method name
-  # Normalize to capitalize first letter for consistent display (e.g., "send" -> "Send")
   defp cosmos_method_or_default(%Transaction{transaction_type: :cosmos, cosmos_data: cosmos_data}, _decoded_input) when is_map(cosmos_data) do
     type = Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type) || "Cosmos Transfer"
     capitalize_cosmos_type(type)
   end
 
-  # Capitalize only the first letter of Cosmos transaction types for consistent display
   defp capitalize_cosmos_type(<<first::utf8, rest::binary>>), do: String.upcase(<<first::utf8>>) <> rest
 
   defp capitalize_cosmos_type(type), do: type
@@ -719,9 +713,7 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
   # Handle Cosmos transactions - return Cosmos-specific type based on category
   def transaction_types(%Transaction{transaction_type: :cosmos, cosmos_data: cosmos_data} = _transaction, _types, :set_code_transaction) when is_map(cosmos_data) do
     require Logger
-    Logger.info("DEBUG: Matched Cosmos transaction with cosmos_data: #{inspect(cosmos_data)}")
     category = Map.get(cosmos_data, "category") || Map.get(cosmos_data, :category) || "transfer"
-    Logger.info("DEBUG: Cosmos category: #{inspect(category)}")
 
     result = case category do
       "staking" -> [:cosmos_staking]
@@ -729,19 +721,16 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
       "ibc" -> [:cosmos_ibc]
       _ -> [:cosmos_transfer]
     end
-    Logger.info("DEBUG: Returning transaction_types: #{inspect(result)}")
     result
   end
 
   def transaction_types(%Transaction{transaction_type: :cosmos} = _transaction, _types, :set_code_transaction) do
     require Logger
-    Logger.info("DEBUG: Matched Cosmos transaction WITHOUT cosmos_data map")
     [:cosmos_transfer]
   end
 
   def transaction_types(%Transaction{type: type, transaction_type: tx_type} = transaction, types, :set_code_transaction) do
     require Logger
-    Logger.info("DEBUG: EVM clause matched - transaction_type: #{inspect(tx_type)}, type: #{inspect(type)}")
     # EIP-7702 set code transaction type
     types =
       if type == 4 do

@@ -480,7 +480,6 @@ defmodule BlockScoutWeb.TransactionView do
 
   def transaction_display_type(%Transaction{} = transaction) do
     cond do
-      # Handle Cosmos transactions first
       transaction.transaction_type == :cosmos ->
         cosmos_data = transaction.cosmos_data || %{}
         cosmos_type = Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type)

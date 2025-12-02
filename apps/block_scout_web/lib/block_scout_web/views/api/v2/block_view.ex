@@ -34,15 +34,9 @@ defmodule BlockScoutWeb.API.V2.BlockView do
 
     transaction_fees = Block.transaction_fees(block.transactions)
 
-    # For Cosmos blocks (number >= 1 billion), display the original Cosmos height
-    display_height = if block.number >= 1_000_000_000 do
-      block.number - 1_000_000_000
-    else
-      block.number
-    end
 
     %{
-      "height" => display_height,
+      "height" => block.number,
       "timestamp" => block.timestamp,
       "transaction_count" => count_transactions(block),
       "miner" => Helper.address_with_info(nil, block.miner, block.miner_hash, false),
