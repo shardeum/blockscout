@@ -420,11 +420,28 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
 
     decoded_input_data = decoded_input(decoded_input)
 
+    # Handle Cosmos transactions
+    unified_block_height = Chain.evm_block_height(@api_true)
+
+    {display_block_number, formatted_confirmations} =
+      if transaction.transaction_type == :cosmos do
+        cosmos_height = get_in(transaction.cosmos_data || %{}, ["cosmos_height"]) ||
+                        get_in(transaction.cosmos_data || %{}, [:cosmos_height]) ||
+                        transaction.block_number
+
+        cosmos_confirmations = max(1, unified_block_height - cosmos_height + 1)
+
+        {cosmos_height, cosmos_confirmations}
+      else
+        evm_confirmations = transaction.block |> Chain.confirmations(block_height: unified_block_height) |> format_confirmations()
+        {transaction.block_number, evm_confirmations}
+      end
+
     result = %{
       "hash" => transaction.hash,
       "result" => status,
       "status" => transaction.status,
-      "block_number" => transaction.block_number,
+      "block_number" => display_block_number,
       "timestamp" => block_timestamp(transaction),
       "from" =>
         Helper.address_with_info(
@@ -450,7 +467,7 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
           single_transaction?,
           watchlist_names
         ),
-      "confirmations" => transaction.block |> Chain.confirmations(block_height: block_height) |> format_confirmations(),
+      "confirmations" => formatted_confirmations,
       "confirmation_duration" => processing_time_duration(transaction),
       "value" => transaction.value,
       "fee" => transaction |> Transaction.fee(:wei) |> format_fee(),
@@ -474,16 +491,34 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
       "token_transfers_overflow" => token_transfers_overflow(transaction.token_transfers, single_transaction?),
       "actions" => transaction_actions(transaction.transaction_actions),
       "exchange_rate" => Market.get_coin_exchange_rate().usd_value,
-      "method" => Transaction.method_name(transaction, decoded_input),
+      "method" => cosmos_method_or_default(transaction, decoded_input),
       "transaction_types" => transaction_types(transaction),
       "transaction_tag" =>
         GetTransactionTags.get_transaction_tags(transaction.hash, current_user(single_transaction? && conn)),
       "has_error_in_internal_transactions" => transaction.has_error_in_internal_transactions,
-      "authorization_list" => authorization_list(transaction.signed_authorizations)
+      "authorization_list" => authorization_list(transaction.signed_authorizations),
+      # Cosmos transaction support
+      "transaction_type" => transaction.transaction_type,
+      "cosmos_data" => transaction.cosmos_data,
+      "alt_hash" => transaction.alt_hash
     }
 
     result
     |> chain_type_fields(transaction, single_transaction?, conn, watchlist_names)
+  end
+
+  # For Cosmos transactions, use the type from cosmos_data as the method name
+  defp cosmos_method_or_default(%Transaction{transaction_type: :cosmos, cosmos_data: cosmos_data}, _decoded_input) when is_map(cosmos_data) do
+    type = Map.get(cosmos_data, "type") || Map.get(cosmos_data, :type) || "Cosmos Transfer"
+    capitalize_cosmos_type(type)
+  end
+
+  defp capitalize_cosmos_type(<<first::utf8, rest::binary>>), do: String.upcase(<<first::utf8>>) <> rest
+
+  defp capitalize_cosmos_type(type), do: type
+
+  defp cosmos_method_or_default(transaction, decoded_input) do
+    Transaction.method_name(transaction, decoded_input)
   end
 
   def token_transfers(_, _conn, false), do: nil
@@ -669,9 +704,33 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
                | :token_transfer
                | :blob_transaction
                | :set_code_transaction
+               | :cosmos_transfer
+               | :cosmos_staking
+               | :cosmos_governance
+               | :cosmos_ibc
   def transaction_types(transaction, types \\ [], stage \\ :set_code_transaction)
 
-  def transaction_types(%Transaction{type: type} = transaction, types, :set_code_transaction) do
+  # Handle Cosmos transactions - return Cosmos-specific type based on category
+  def transaction_types(%Transaction{transaction_type: :cosmos, cosmos_data: cosmos_data} = _transaction, _types, :set_code_transaction) when is_map(cosmos_data) do
+    require Logger
+    category = Map.get(cosmos_data, "category") || Map.get(cosmos_data, :category) || "transfer"
+
+    result = case category do
+      "staking" -> [:cosmos_staking]
+      "governance" -> [:cosmos_governance]
+      "ibc" -> [:cosmos_ibc]
+      _ -> [:cosmos_transfer]
+    end
+    result
+  end
+
+  def transaction_types(%Transaction{transaction_type: :cosmos} = _transaction, _types, :set_code_transaction) do
+    require Logger
+    [:cosmos_transfer]
+  end
+
+  def transaction_types(%Transaction{type: type, transaction_type: tx_type} = transaction, types, :set_code_transaction) do
+    require Logger
     # EIP-7702 set code transaction type
     types =
       if type == 4 do

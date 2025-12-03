@@ -230,6 +230,11 @@ defmodule Explorer.Chain.Transaction.Schema do
         field(:has_error_in_internal_transactions, :boolean)
         field(:has_token_transfers, :boolean, virtual: true)
 
+        # Cosmos transaction support
+        field(:transaction_type, Ecto.Enum, values: [:evm, :cosmos], default: :evm)
+        field(:cosmos_data, :map)
+        field(:alt_hash, Hash.Full)
+
         # stability virtual fields
         field(:transaction_fee_log, :any, virtual: true)
         field(:transaction_fee_token, :any, virtual: true)
@@ -331,7 +336,8 @@ defmodule Explorer.Chain.Transaction do
                      block_consensus block_timestamp created_contract_address_hash
                      cumulative_gas_used earliest_processing_start error gas_price
                      gas_used index created_contract_code_indexed_at status
-                     to_address_hash revert_reason type has_error_in_internal_transactions r s v)a
+                     to_address_hash revert_reason type has_error_in_internal_transactions r s v
+                     transaction_type cosmos_data alt_hash)a
 
   @chain_type_optional_attrs (case @chain_type do
                                 :optimism ->
@@ -353,7 +359,9 @@ defmodule Explorer.Chain.Transaction do
                                   ~w()a
                               end)
 
-  @required_attrs ~w(from_address_hash gas hash input nonce value)a
+  # Different requirements for EVM vs Cosmos transactions
+  @required_attrs ~w(from_address_hash gas hash value)a
+  @evm_required_attrs ~w(input nonce)a
 
   @typedoc """
   X coordinate module n in
@@ -671,12 +679,29 @@ defmodule Explorer.Chain.Transaction do
   def changeset(%__MODULE__{} = transaction, attrs \\ %{}) do
     attrs_to_cast =
       @required_attrs ++
+        @evm_required_attrs ++
         @optional_attrs ++
         @chain_type_optional_attrs
 
-    transaction
-    |> cast(attrs, attrs_to_cast)
-    |> validate_required(@required_attrs)
+    changeset =
+      transaction
+      |> cast(attrs, attrs_to_cast)
+      |> validate_required(@required_attrs)
+
+    # Apply different validations based on transaction type
+    changeset =
+      case get_field(changeset, :transaction_type) do
+        :cosmos ->
+          # Cosmos transactions don't require EVM-specific fields
+          changeset
+
+        _ ->
+          # EVM transactions require input and nonce
+          changeset
+          |> validate_required(@evm_required_attrs)
+      end
+
+    changeset
     |> validate_collated()
     |> validate_error()
     |> validate_status()
@@ -1685,8 +1710,9 @@ defmodule Explorer.Chain.Transaction do
   end
 
   defp order_for_transactions(query, _) do
+    # Sort by inserted_at first to ensure proper chronological ordering
     query
-    |> order_by([transaction], desc: transaction.block_number, desc: transaction.index)
+    |> order_by([transaction], desc: transaction.inserted_at, desc: transaction.block_number, desc: transaction.index)
   end
 
   @doc """
@@ -2103,7 +2129,7 @@ defmodule Explorer.Chain.Transaction do
   def method_name(_, _, skip_sc_check? \\ false)
 
   def method_name(_, {:ok, _method_id, text, _mapping}, _) do
-    parse_method_name(text, false)
+    parse_method_name(text, true)
   end
 
   def method_name(

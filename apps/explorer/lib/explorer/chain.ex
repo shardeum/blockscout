@@ -2211,6 +2211,19 @@ defmodule Explorer.Chain do
     select_repo(options).one!(query)
   end
 
+  @doc """
+  Gets the maximum EVM block number
+  """
+  @spec evm_block_height(Keyword.t()) :: block_height()
+  def evm_block_height(options \\ []) do
+    query = from(block in Block,
+      select: coalesce(max(block.number), 0),
+      where: block.consensus == true
+    )
+
+    select_repo(options).one!(query)
+  end
+
   def indexer_running? do
     Application.get_env(:indexer, Indexer.Supervisor)[:enabled] or match?({:ok, _, _}, last_db_block_status())
   end

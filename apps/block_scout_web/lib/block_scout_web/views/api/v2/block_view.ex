@@ -34,6 +34,7 @@ defmodule BlockScoutWeb.API.V2.BlockView do
 
     transaction_fees = Block.transaction_fees(block.transactions)
 
+
     %{
       "height" => block.number,
       "timestamp" => block.timestamp,
