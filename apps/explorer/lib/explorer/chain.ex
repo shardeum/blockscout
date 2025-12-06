@@ -3815,33 +3815,42 @@ defmodule Explorer.Chain do
           }
         ]) :: {integer(), nil | [term()]}
   def find_and_update_replaced_transactions(transactions, timeout \\ :infinity) do
-    query =
-      transactions
-      |> Enum.reduce(
-        Transaction,
-        fn %{hash: hash, nonce: nonce, from_address_hash: from_address_hash}, query ->
-          from(t in query,
-            or_where:
-              t.nonce == ^nonce and t.from_address_hash == ^from_address_hash and t.hash != ^hash and
-                not is_nil(t.block_number)
-          )
-        end
-      )
-      # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
-      |> order_by(asc: :hash)
-      |> lock("FOR NO KEY UPDATE")
+    filtered_transactions =
+      Enum.filter(transactions, fn transaction ->
+        transaction[:hash] && transaction[:nonce] && transaction[:from_address_hash]
+      end)
 
-    hashes = Enum.map(transactions, & &1.hash)
+    if Enum.empty?(filtered_transactions) do
+      {0, []}
+    else
+      query =
+        filtered_transactions
+        |> Enum.reduce(
+          Transaction,
+          fn %{hash: hash, nonce: nonce, from_address_hash: from_address_hash}, query ->
+            from(t in query,
+              or_where:
+                t.nonce == ^nonce and t.from_address_hash == ^from_address_hash and t.hash != ^hash and
+                  not is_nil(t.block_number)
+            )
+          end
+        )
+        # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
+        |> order_by(asc: :hash)
+        |> lock("FOR NO KEY UPDATE")
 
-    transactions_to_update =
-      from(pending in Transaction,
-        join: duplicate in subquery(query),
-        on: duplicate.nonce == pending.nonce,
-        on: duplicate.from_address_hash == pending.from_address_hash,
-        where: pending.hash in ^hashes and is_nil(pending.block_hash)
-      )
+      hashes = Enum.map(filtered_transactions, & &1.hash)
 
-    Repo.update_all(transactions_to_update, [set: [error: "dropped/replaced", status: :error]], timeout: timeout)
+      transactions_to_update =
+        from(pending in Transaction,
+          join: duplicate in subquery(query),
+          on: duplicate.nonce == pending.nonce,
+          on: duplicate.from_address_hash == pending.from_address_hash,
+          where: pending.hash in ^hashes and is_nil(pending.block_hash)
+        )
+
+      Repo.update_all(transactions_to_update, [set: [error: "dropped/replaced", status: :error]], timeout: timeout)
+    end
   end
 
   @spec update_replaced_transactions([
