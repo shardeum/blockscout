@@ -36,6 +36,7 @@ services:
       CHAIN_ID: '8117'
       COSMOS_RPC_URL: http://host.docker.internal:26657
       COSMOS_TRANSACTION_MONITOR_ENABLED: true
+      COSMOS_DASHBOARD_API_URL: http://host.docker.internal:3001
 
   visualizer:
     extends:

@@ -822,6 +822,12 @@ config :indexer, Indexer.Fetcher.CosmosTransaction,
   poll_interval: ConfigHelper.parse_time_env_var("INDEXER_COSMOS_TRANSACTION_POLL_INTERVAL", "5s"),
   batch_size: ConfigHelper.parse_integer_env_var("INDEXER_COSMOS_TRANSACTION_BATCH_SIZE", 100)
 
+config :indexer, Indexer.Fetcher.CosmosTransactionHistorical,
+  enabled: ConfigHelper.parse_bool_env_var("INDEXER_COSMOS_HISTORICAL_ENABLED"),
+  poll_interval: ConfigHelper.parse_time_env_var("INDEXER_COSMOS_HISTORICAL_POLL_INTERVAL", "2s"),
+  batch_size: ConfigHelper.parse_integer_env_var("INDEXER_COSMOS_HISTORICAL_BATCH_SIZE", 100),
+  max_pages: ConfigHelper.parse_integer_env_var("INDEXER_COSMOS_HISTORICAL_MAX_PAGES", 10000)
+
 config :indexer, Indexer.Fetcher.Cosmos.DashboardAPIClient,
   base_url: System.get_env("COSMOS_DASHBOARD_API_URL", "http://localhost:3001")
 

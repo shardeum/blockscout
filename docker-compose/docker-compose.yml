@@ -42,6 +42,7 @@ services:
       COSMOS_RPC_URL: http://host.docker.internal:26657
       COSMOS_TRANSACTION_MONITOR_ENABLED: "true"
       COSMOS_DASHBOARD_API_URL: http://host.docker.internal:3001
+      COSMOS_CATCHUP_START_HEIGHT: "1"
   # nft_media_handler:
   #   depends_on:
   #     - backend

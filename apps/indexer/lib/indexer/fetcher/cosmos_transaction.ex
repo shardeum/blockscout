@@ -127,6 +127,9 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         end
       end)
 
+    # Assign unique indices per block
+    blockscout_transactions = assign_unique_indices(blockscout_transactions)
+
     # Extract unique blocks from transactions
     blocks =
       blockscout_transactions
@@ -271,10 +274,13 @@ defmodule Indexer.Fetcher.CosmosTransaction do
     # Use "fee" (human readable string) instead of "feeAmount" (raw ashm)
     fee_wei = parse_amount(tx["fee"])
 
-      # Parse gas values
-      gas_wanted = parse_integer(tx["gasWanted"]) || 0
-      gas_used = parse_integer(tx["gasUsed"]) || 0
-      cosmos_height = parse_integer(tx["height"]) || 0
+    # Parse gas values
+    gas_wanted = parse_integer(tx["gasWanted"]) || 0
+    gas_used = parse_integer(tx["gasUsed"]) || 0
+    cosmos_height = parse_integer(tx["height"]) || 0
+
+    # Parse block timestamp from Cosmos transaction
+    block_timestamp = parse_timestamp(tx["timestamp"])
 
       # Check if EVM block already exists at this height - use its hash if so
       # This avoids creating duplicate blocks when EVM blocks are available
@@ -301,6 +307,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         alt_hash: alt_hash,
         block_number: cosmos_height,
         block_hash: block_hash,
+        block_timestamp: block_timestamp,
         from_address_hash: from_hash,
         to_address_hash: effective_to_hash,
         value: amount_wei,
@@ -374,6 +381,40 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         on_conflict: :replace_all
       }
     })
+  end
+
+  # Assign unique transaction indices per block
+  defp assign_unique_indices(transactions) do
+    # Group transactions by block_hash
+    grouped = Enum.group_by(transactions, & &1.block_hash)
+
+    # For each block, get existing max index and assign new indices starting from max+1
+    Enum.flat_map(grouped, fn {block_hash, txs} ->
+      # Get the current max index for this block from the database
+      existing_max_index = get_max_transaction_index_for_block(block_hash)
+
+      # Assign indices starting from existing_max + 1
+      txs
+      |> Enum.with_index(existing_max_index + 1)
+      |> Enum.map(fn {tx, idx} ->
+        %{tx | index: idx}
+      end)
+    end)
+  end
+
+  defp get_max_transaction_index_for_block(block_hash) do
+    query =
+      from(t in Transaction,
+        where: t.block_hash == ^block_hash,
+        select: max(t.index)
+      )
+
+    case Repo.one(query) do
+      nil -> -1  # No transactions yet, start from 0
+      max_idx -> max_idx
+    end
+  rescue
+    _ -> -1
   end
 
   defp update_balances(balance_params) do

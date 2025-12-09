@@ -34,6 +34,7 @@ defmodule Indexer.Supervisor do
     BlockReward,
     ContractCode,
     CosmosTransaction,
+    CosmosTransactionHistorical,
     EmptyBlocksSanitizer,
     InternalTransaction,
     PendingBlockOperationsSanitizer,
@@ -241,6 +242,14 @@ defmodule Indexer.Supervisor do
           [
             poll_interval: Application.get_env(:indexer, CosmosTransaction)[:poll_interval],
             batch_size: Application.get_env(:indexer, CosmosTransaction)[:batch_size]
+          ]
+        ]),
+        # Cosmos transaction historical fetcher (backfill)
+        configure(CosmosTransactionHistorical, [
+          [
+            poll_interval: Application.get_env(:indexer, CosmosTransactionHistorical)[:poll_interval],
+            batch_size: Application.get_env(:indexer, CosmosTransactionHistorical)[:batch_size],
+            max_pages: Application.get_env(:indexer, CosmosTransactionHistorical)[:max_pages]
           ]
         ]),
 
