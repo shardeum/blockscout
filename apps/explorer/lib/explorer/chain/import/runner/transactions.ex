@@ -610,6 +610,7 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
           ),
         on: transaction.hash == new_transaction.hash,
         where: transaction.block_hash != new_transaction.block_hash,
+        where: transaction.transaction_type != :cosmos or is_nil(transaction.transaction_type),
         select: %{hash: transaction.hash, block_hash: transaction.block_hash}
       )
 
@@ -635,6 +636,7 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
         from(
           transaction in Transaction,
           where: transaction.block_hash in ^block_hashes,
+          where: transaction.transaction_type != :cosmos or is_nil(transaction.transaction_type),
           # Enforce Transaction ShareLocks order (see docs: sharelocks.md)
           order_by: [asc: :hash],
           lock: "FOR NO KEY UPDATE"
