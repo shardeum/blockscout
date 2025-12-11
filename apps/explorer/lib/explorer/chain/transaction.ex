@@ -1703,7 +1703,32 @@ defmodule Explorer.Chain.Transaction do
     __MODULE__
     |> order_for_transactions(with_pending?)
     |> Chain.where_block_number_in_period(from_block, to_block)
+    |> exclude_duplicate_cosmos_transactions()
     |> handle_paging_options(paging_options)
+  end
+
+  @doc """
+  Excludes Cosmos transactions that have a corresponding EVM transaction.
+  This prevents duplicate display in the explorer when the same transaction
+  is indexed through both the Cosmos fetcher and the EVM indexer.
+  A Cosmos transaction's alt_hash field contains the corresponding EVM transaction hash.
+  """
+  @spec exclude_duplicate_cosmos_transactions(Ecto.Query.t()) :: Ecto.Query.t()
+  def exclude_duplicate_cosmos_transactions(query) do
+    from(t in query,
+      where:
+        # Include all non-cosmos transactions
+        t.transaction_type != :cosmos or is_nil(t.transaction_type) or
+        # Include cosmos transactions that don't have an alt_hash (no EVM equivalent)
+        is_nil(t.alt_hash) or
+        # Include cosmos transactions where no EVM transaction exists with that alt_hash
+        not exists(
+          from(evm_tx in __MODULE__,
+            where: evm_tx.hash == t.alt_hash,
+            where: evm_tx.transaction_type != :cosmos or is_nil(evm_tx.transaction_type)
+          )
+        )
+    )
   end
 
   @default_sorting [

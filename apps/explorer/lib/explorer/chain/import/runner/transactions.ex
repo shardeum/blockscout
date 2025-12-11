@@ -65,6 +65,14 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
         :transactions
       )
     end)
+    |> Multi.run(:cleanup_duplicate_cosmos_transactions, fn repo, %{transactions: inserted_transactions} ->
+      Instrumenter.block_import_stage_runner(
+        fn -> cleanup_duplicate_cosmos_transactions(repo, inserted_transactions, insert_options) end,
+        :block_referencing,
+        :transactions,
+        :cleanup_duplicate_cosmos_transactions
+      )
+    end)
   end
 
   @impl Import.Runner
@@ -106,6 +114,41 @@ defmodule Explorer.Chain.Import.Runner.Transactions do
       timeout: timeout,
       timestamps: timestamps
     )
+  end
+
+  # Cleanup duplicate Cosmos transactions when EVM transactions are imported
+  # If an EVM transaction is imported with a hash that matches a Cosmos transaction's alt_hash,
+  # delete the Cosmos transaction to prevent duplicate display in the explorer.
+  @spec cleanup_duplicate_cosmos_transactions(Repo.t(), [Transaction.t()], map()) :: {:ok, non_neg_integer()}
+  defp cleanup_duplicate_cosmos_transactions(repo, inserted_transactions, %{timeout: timeout}) do
+    # Get hashes of newly inserted EVM transactions (non-cosmos transactions)
+    evm_hashes =
+      inserted_transactions
+      |> Enum.filter(fn tx ->
+        # Only consider EVM transactions (transaction_type is nil or :evm)
+        tx.transaction_type != :cosmos
+      end)
+      |> Enum.map(& &1.hash)
+
+    if Enum.empty?(evm_hashes) do
+      {:ok, 0}
+    else
+      # Delete Cosmos transactions where alt_hash matches any of the inserted EVM transaction hashes
+      query =
+        from(t in Transaction,
+          where: t.transaction_type == :cosmos,
+          where: t.alt_hash in ^evm_hashes
+        )
+
+      {deleted_count, _} = repo.delete_all(query, timeout: timeout)
+
+      if deleted_count > 0 do
+        require Logger
+        Logger.info("Cleaned up #{deleted_count} duplicate Cosmos transaction(s) that have corresponding EVM transactions")
+      end
+
+      {:ok, deleted_count}
+    end
   end
 
   # todo: avoid code duplication
