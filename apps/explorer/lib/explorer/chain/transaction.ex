@@ -1716,6 +1716,7 @@ defmodule Explorer.Chain.Transaction do
   @spec exclude_duplicate_cosmos_transactions(Ecto.Query.t()) :: Ecto.Query.t()
   def exclude_duplicate_cosmos_transactions(query) do
     from(t in query,
+      as: :outer_tx,
       where:
         # Include all non-cosmos transactions
         t.transaction_type != :cosmos or is_nil(t.transaction_type) or
@@ -1724,7 +1725,7 @@ defmodule Explorer.Chain.Transaction do
         # Include cosmos transactions where no EVM transaction exists with that alt_hash
         not exists(
           from(evm_tx in __MODULE__,
-            where: evm_tx.hash == t.alt_hash,
+            where: evm_tx.hash == parent_as(:outer_tx).alt_hash,
             where: evm_tx.transaction_type != :cosmos or is_nil(evm_tx.transaction_type)
           )
         )
