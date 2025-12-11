@@ -293,8 +293,8 @@ defmodule Indexer.Fetcher.CosmosTransaction do
           create_synthetic_block_hash(cosmos_height)
       end
 
-      # Determine status - use 1 for success (Cosmos transactions from dashboard are confirmed)
-      status = 1
+      # Determine status - use :ok for success (Cosmos transactions from dashboard are confirmed)
+      status = :ok
 
       # For Cosmos transactions without a to_address (e.g., staking, governance),
       # use the from_address as a placeholder to prevent null constraint violations

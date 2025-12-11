@@ -346,7 +346,7 @@ defmodule Indexer.Fetcher.CosmosTransactionHistorical do
       end
 
     # Determine status
-    status = 1
+    status = :ok
 
     # Use from_address as placeholder if to_address is nil
     effective_to_hash = to_hash || from_hash
