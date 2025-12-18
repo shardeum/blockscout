@@ -44,6 +44,28 @@ defmodule Indexer.Fetcher.Cosmos.DashboardAPIClient do
   end
 
   @doc """
+  Fetches paginated transactions for historical backfill.
+
+  ## Parameters
+  - `page` - Page number (default: 1)
+  - `limit` - Results per page (default: 100, max: 100)
+
+  ## Returns
+  - `{:ok, list(), pagination}`: List of transactions with pagination info
+  - `{:error, reason}`: Error tuple
+  """
+  @spec fetch_transactions_paginated(pos_integer(), pos_integer()) ::
+          {:ok, list(map()), map()} | {:error, term()}
+  def fetch_transactions_paginated(page \\ 1, limit \\ 100) do
+    url = build_url("/api/v1/transactions", %{page: page, limit: min(limit, 100)})
+
+    with {:ok, data, pagination} <- do_get_with_pagination(url),
+         {:ok, transactions} <- extract_transactions(data) do
+      {:ok, transactions, pagination}
+    end
+  end
+
+  @doc """
   Fetches a single transaction by hash from the dashboard indexer.
 
   ## Parameters
@@ -136,13 +158,49 @@ defmodule Indexer.Fetcher.Cosmos.DashboardAPIClient do
   def health_check do
     url = build_url("/api/v1/health")
 
-    case do_get(url) do
+    case do_get_health(url) do
       {:ok, _data} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
   # Private functions
+
+  # Health endpoint returns a different format: {"status": "healthy", "database": true, ...}
+  defp do_get_health(url) do
+    headers = [
+      {"Content-Type", "application/json"},
+      {"Accept", "application/json"}
+    ]
+
+    Logger.debug("Fetching health from Dashboard API: #{url}")
+
+    case HTTPoison.get(url, headers, recv_timeout: @default_timeout, timeout: @default_timeout) do
+      {:ok, %Response{body: body, status_code: 200}} ->
+        case Helper.decode_json(body) do
+          %{"status" => "healthy"} = data ->
+            {:ok, data}
+
+          %{"status" => status} ->
+            {:error, {:unhealthy, status}}
+
+          other ->
+            Logger.warning("Unexpected health check response: #{inspect(other)}")
+            {:error, :invalid_response_format}
+        end
+
+      {:ok, %Response{body: _body, status_code: 404}} ->
+        {:error, :not_found}
+
+      {:ok, %Response{body: body, status_code: status_code}} when status_code >= 400 ->
+        Logger.warning("Dashboard API HTTP error #{status_code}: #{body}")
+        {:error, {:http_error, status_code}}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("Dashboard API request failed: #{inspect(reason)}")
+        {:error, {:connection_error, reason}}
+    end
+  end
 
   defp do_get(url) do
     headers = [
@@ -157,6 +215,46 @@ defmodule Indexer.Fetcher.Cosmos.DashboardAPIClient do
         case Helper.decode_json(body) do
           %{"success" => true, "data" => data} ->
             {:ok, data}
+
+          %{"success" => false, "error" => error} ->
+            Logger.warning("Dashboard API returned error: #{error}")
+            {:error, {:api_error, error}}
+
+          other ->
+            Logger.warning("Unexpected Dashboard API response format: #{inspect(other)}")
+            {:error, :invalid_response_format}
+        end
+
+      {:ok, %Response{body: _body, status_code: 404}} ->
+        {:error, :not_found}
+
+      {:ok, %Response{body: body, status_code: status_code}} when status_code >= 400 ->
+        Logger.warning("Dashboard API HTTP error #{status_code}: #{body}")
+        {:error, {:http_error, status_code}}
+
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("Dashboard API request failed: #{inspect(reason)}")
+        {:error, {:connection_error, reason}}
+    end
+  end
+
+  defp do_get_with_pagination(url) do
+    headers = [
+      {"Content-Type", "application/json"},
+      {"Accept", "application/json"}
+    ]
+
+    Logger.debug("Fetching from Dashboard API with pagination: #{url}")
+
+    case HTTPoison.get(url, headers, recv_timeout: @default_timeout, timeout: @default_timeout) do
+      {:ok, %Response{body: body, status_code: 200}} ->
+        case Helper.decode_json(body) do
+          %{"success" => true, "data" => data, "pagination" => pagination} ->
+            {:ok, data, pagination}
+
+          %{"success" => true, "data" => data} ->
+            # No pagination info, return empty pagination
+            {:ok, data, %{"page" => 1, "limit" => 100, "total" => length(data)}}
 
           %{"success" => false, "error" => error} ->
             Logger.warning("Dashboard API returned error: #{error}")
