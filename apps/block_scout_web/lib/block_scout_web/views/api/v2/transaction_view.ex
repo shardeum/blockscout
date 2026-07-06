@@ -500,7 +500,8 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
       # Cosmos transaction support
       "transaction_type" => transaction.transaction_type,
       "cosmos_data" => transaction.cosmos_data,
-      "alt_hash" => transaction.alt_hash
+      "alt_hash" => transaction.alt_hash,
+      "sdk_tx_hash" => transaction.sdk_tx_hash
     }
 
     result

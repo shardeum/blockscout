@@ -50,7 +50,14 @@ services:
       - STATS__CREATE_DATABASE=${STATS__CREATE_DATABASE:-true}
       - STATS__RUN_MIGRATIONS=${STATS__RUN_MIGRATIONS:-true}
       - STATS__FORCE_UPDATE_ON_START=true
-      - STATS__DEFAULT_SCHEDULE=* * * * * * *
+      - STATS__DEFAULT_SCHEDULE=0 0 1 * * * *
       - STATS__BLOCKSCOUT_API_URL=http://backend:4000
       - STATS__CONDITIONAL_START__BLOCKS_RATIO__ENABLED=false
       - STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED=false
+    networks:
+      - default
+      - docker-compose_default
+
+networks:
+  docker-compose_default:
+    external: true

@@ -234,6 +234,7 @@ defmodule Explorer.Chain.Transaction.Schema do
         field(:transaction_type, Ecto.Enum, values: [:evm, :cosmos], default: :evm)
         field(:cosmos_data, :map)
         field(:alt_hash, Hash.Full)
+        field(:sdk_tx_hash, Hash.Full)
 
         # stability virtual fields
         field(:transaction_fee_log, :any, virtual: true)
@@ -337,7 +338,7 @@ defmodule Explorer.Chain.Transaction do
                      cumulative_gas_used earliest_processing_start error gas_price
                      gas_used index created_contract_code_indexed_at status
                      to_address_hash revert_reason type has_error_in_internal_transactions r s v
-                     transaction_type cosmos_data alt_hash)a
+                     transaction_type cosmos_data alt_hash sdk_tx_hash)a
 
   @chain_type_optional_attrs (case @chain_type do
                                 :optimism ->

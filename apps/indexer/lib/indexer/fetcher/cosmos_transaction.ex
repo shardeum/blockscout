@@ -233,6 +233,10 @@ defmodule Indexer.Fetcher.CosmosTransaction do
       # Parse hashes
       {:ok, hash} = parse_hash(tx["hash"])
       alt_hash = if tx["evmHash"], do: parse_hash(tx["evmHash"]) |> elem(1), else: nil
+      # Preserve the original SDK (Cosmos) tx hash, decoded from its raw hex
+      # string, separately from `hash` (which may be a synthetic digest when
+      # the dashboard API doesn't return an "0x"-prefixed hash).
+      sdk_tx_hash = parse_sdk_tx_hash(tx["hash"])
 
       # Skip if an EVM transaction with the same hash already exists
       # This prevents duplicate display of native transfers that are indexed by both
@@ -248,7 +252,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         if is_nil(from_hash) do
           {:error, "from_address is required"}
         else
-          process_transaction(tx, hash, alt_hash, from_hash, to_hash)
+          process_transaction(tx, hash, alt_hash, sdk_tx_hash, from_hash, to_hash)
         end
       end
     rescue
@@ -263,7 +267,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
     Repo.exists?(from t in Transaction, where: t.hash == ^hash)
   end
 
-  defp process_transaction(tx, hash, alt_hash, from_hash, to_hash) do
+  defp process_transaction(tx, hash, alt_hash, sdk_tx_hash, from_hash, to_hash) do
     # Parse amounts
     # Dashboard API returns:
     # - "amount" as string (human readable, e.g., "0.111000")
@@ -305,6 +309,7 @@ defmodule Indexer.Fetcher.CosmosTransaction do
         hash: hash,
         transaction_type: :cosmos,
         alt_hash: alt_hash,
+        sdk_tx_hash: sdk_tx_hash,
         block_number: cosmos_height,
         block_hash: block_hash,
         block_timestamp: block_timestamp,
@@ -556,6 +561,30 @@ defmodule Indexer.Fetcher.CosmosTransaction do
 
     Hash.cast(Hash.Full, hash_bytes)
   end
+
+  # The dashboard API returns the genuine Cosmos/Tendermint tx hash as a bare
+  # 64-char hex string (no "0x" prefix). `parse_hash/1` re-hashes that string
+  # with SHA-256 to build a deterministic `hash` column value, which loses the
+  # original bytes. Preserve them here so the real SDK hash can be displayed
+  # and searched on later.
+  defp parse_sdk_tx_hash(hash_string) when is_binary(hash_string) do
+    if String.match?(hash_string, ~r/^[0-9a-fA-F]{64}$/) do
+      case Base.decode16(hash_string, case: :mixed) do
+        {:ok, hash_bytes} ->
+          case Hash.cast(Hash.Full, hash_bytes) do
+            {:ok, hash} -> hash
+            _ -> nil
+          end
+
+        :error ->
+          nil
+      end
+    else
+      nil
+    end
+  end
+
+  defp parse_sdk_tx_hash(_), do: nil
 
   defp parse_address(nil), do: nil
   defp parse_address(""), do: nil
