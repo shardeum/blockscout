@@ -500,11 +500,22 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
       # Cosmos transaction support
       "transaction_type" => transaction.transaction_type,
       "cosmos_data" => transaction.cosmos_data,
-      "alt_hash" => transaction.alt_hash
+      "alt_hash" => transaction.alt_hash,
+      "sdk_tx_hash" => format_sdk_tx_hash(transaction.sdk_tx_hash)
     }
 
     result
     |> chain_type_fields(transaction, single_transaction?, conn, watchlist_names)
+  end
+
+  # Cosmos/Tendermint tx hashes are conventionally displayed as bare uppercase
+  # hex, with no "0x" prefix (unlike EVM hashes). `Hash.Full`'s default
+  # encoding always produces a "0x"-prefixed lowercase string, so format it
+  # explicitly here instead of exposing it verbatim.
+  defp format_sdk_tx_hash(nil), do: nil
+
+  defp format_sdk_tx_hash(%Explorer.Chain.Hash{bytes: bytes}) do
+    Base.encode16(bytes, case: :upper)
   end
 
   # For Cosmos transactions, use the type from cosmos_data as the method name
