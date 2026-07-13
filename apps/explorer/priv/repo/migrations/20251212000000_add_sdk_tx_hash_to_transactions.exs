@@ -1,6 +1,9 @@
 defmodule Explorer.Repo.Migrations.AddSdkTxHashToTransactions do
   use Ecto.Migration
 
+  @disable_ddl_transaction true
+  @disable_migration_lock true
+
   def change do
     alter table(:transactions) do
       # Raw SDK (Cosmos) transaction hash, decoded from the hex string returned
@@ -9,6 +12,6 @@ defmodule Explorer.Repo.Migrations.AddSdkTxHashToTransactions do
       add(:sdk_tx_hash, :bytea, null: true)
     end
 
-    create(index(:transactions, :sdk_tx_hash))
+    create(index(:transactions, :sdk_tx_hash, concurrently: true))
   end
 end
