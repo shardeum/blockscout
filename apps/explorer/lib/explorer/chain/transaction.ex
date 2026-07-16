@@ -828,6 +828,10 @@ defmodule Explorer.Chain.Transaction do
   def decoded_input_data(%NotLoaded{}, _, _, _, _),
     do: {:error, :not_loaded}
 
+  # skip decoding if there is no input data (e.g. cosmos transactions, where input is nil)
+  def decoded_input_data(%__MODULE__{input: nil}, _, _, _, _),
+    do: {:error, :no_input_data}
+
   # skip decoding if input is empty
   def decoded_input_data(
         %__MODULE__{input: %{bytes: bytes}},
