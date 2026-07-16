@@ -13,7 +13,8 @@ defmodule Indexer.Fetcher.OnDemand.FirstTrace do
   require Logger
 
   def maybe_trigger_fetch(transaction, opts \\ []) do
-    unless Application.get_env(:explorer, :shrink_internal_transactions_enabled) do
+    unless transaction.transaction_type == :cosmos ||
+             Application.get_env(:explorer, :shrink_internal_transactions_enabled) do
       transaction.hash
       |> InternalTransaction.all_transaction_to_internal_transactions(opts)
       |> Enum.any?(&(&1.index == 0))
@@ -53,7 +54,7 @@ defmodule Indexer.Fetcher.OnDemand.FirstTrace do
 
       {:error, reason} ->
         Logger.error(fn ->
-          ["Error while fetching first trace for transaction: #{hash_string} error reason: ", reason]
+          ["Error while fetching first trace for transaction: #{hash_string} error reason: ", inspect(reason)]
         end)
 
       :ignore ->

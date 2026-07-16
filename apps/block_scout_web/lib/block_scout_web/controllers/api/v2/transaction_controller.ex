@@ -443,23 +443,30 @@ defmodule BlockScoutWeb.API.V2.TransactionController do
   @spec raw_trace(Plug.Conn.t(), map()) :: Plug.Conn.t() | {atom(), any()}
   def raw_trace(conn, %{"transaction_hash_param" => transaction_hash_string} = params) do
     with {:ok, transaction, _transaction_hash} <- validate_transaction(transaction_hash_string, params) do
-      if is_nil(transaction.block_number) do
-        conn
-        |> put_status(200)
-        |> render(:raw_trace, %{internal_transactions: []})
-      else
-        FirstTraceOnDemand.maybe_trigger_fetch(transaction, @api_true)
+      cond do
+        transaction.transaction_type == :cosmos ->
+          conn
+          |> put_status(200)
+          |> render(:raw_trace, %{raw_traces: []})
 
-        case Chain.fetch_transaction_raw_traces(transaction) do
-          {:ok, raw_traces} ->
-            conn
-            |> put_status(200)
-            |> render(:raw_trace, %{raw_traces: raw_traces})
+        is_nil(transaction.block_number) ->
+          conn
+          |> put_status(200)
+          |> render(:raw_trace, %{internal_transactions: []})
 
-          {:error, error} ->
-            Logger.error("Raw trace fetching failed: #{inspect(error)}")
-            {500, "Error while raw trace fetching"}
-        end
+        true ->
+          FirstTraceOnDemand.maybe_trigger_fetch(transaction, @api_true)
+
+          case Chain.fetch_transaction_raw_traces(transaction) do
+            {:ok, raw_traces} ->
+              conn
+              |> put_status(200)
+              |> render(:raw_trace, %{raw_traces: raw_traces})
+
+            {:error, error} ->
+              Logger.error("Raw trace fetching failed: #{inspect(error)}")
+              {500, "Error while raw trace fetching"}
+          end
       end
     end
   end

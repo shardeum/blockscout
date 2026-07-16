@@ -230,6 +230,12 @@ defmodule Explorer.Chain.Transaction.Schema do
         field(:has_error_in_internal_transactions, :boolean)
         field(:has_token_transfers, :boolean, virtual: true)
 
+        # Cosmos transaction support
+        field(:transaction_type, Ecto.Enum, values: [:evm, :cosmos], default: :evm)
+        field(:cosmos_data, :map)
+        field(:alt_hash, Hash.Full)
+        field(:sdk_tx_hash, Hash.Full)
+
         # stability virtual fields
         field(:transaction_fee_log, :any, virtual: true)
         field(:transaction_fee_token, :any, virtual: true)
@@ -331,7 +337,8 @@ defmodule Explorer.Chain.Transaction do
                      block_consensus block_timestamp created_contract_address_hash
                      cumulative_gas_used earliest_processing_start error gas_price
                      gas_used index created_contract_code_indexed_at status
-                     to_address_hash revert_reason type has_error_in_internal_transactions r s v)a
+                     to_address_hash revert_reason type has_error_in_internal_transactions r s v
+                     transaction_type cosmos_data alt_hash sdk_tx_hash)a
 
   @chain_type_optional_attrs (case @chain_type do
                                 :optimism ->
@@ -353,7 +360,9 @@ defmodule Explorer.Chain.Transaction do
                                   ~w()a
                               end)
 
-  @required_attrs ~w(from_address_hash gas hash input nonce value)a
+  # Different requirements for EVM vs Cosmos transactions
+  @required_attrs ~w(from_address_hash gas hash value)a
+  @evm_required_attrs ~w(input nonce)a
 
   @typedoc """
   X coordinate module n in
@@ -671,12 +680,29 @@ defmodule Explorer.Chain.Transaction do
   def changeset(%__MODULE__{} = transaction, attrs \\ %{}) do
     attrs_to_cast =
       @required_attrs ++
+        @evm_required_attrs ++
         @optional_attrs ++
         @chain_type_optional_attrs
 
-    transaction
-    |> cast(attrs, attrs_to_cast)
-    |> validate_required(@required_attrs)
+    changeset =
+      transaction
+      |> cast(attrs, attrs_to_cast)
+      |> validate_required(@required_attrs)
+
+    # Apply different validations based on transaction type
+    changeset =
+      case get_field(changeset, :transaction_type) do
+        :cosmos ->
+          # Cosmos transactions don't require EVM-specific fields
+          changeset
+
+        _ ->
+          # EVM transactions require input and nonce
+          changeset
+          |> validate_required(@evm_required_attrs)
+      end
+
+    changeset
     |> validate_collated()
     |> validate_error()
     |> validate_status()
@@ -1620,17 +1646,50 @@ defmodule Explorer.Chain.Transaction do
   defp compare_custom_sorting([]), do: &compare_default_sorting/2
 
   defp compare_default_sorting(a, b) do
-    case {
-      Helper.compare(a.block_number, b.block_number),
-      Helper.compare(a.index, b.index),
-      DateTime.compare(a.inserted_at, b.inserted_at),
-      Helper.compare(Hash.to_integer(a.hash), Hash.to_integer(b.hash))
-    } do
-      {:lt, _, _, _} -> false
-      {:eq, :lt, _, _} -> false
-      {:eq, :eq, :lt, _} -> false
-      {:eq, :eq, :eq, :gt} -> false
-      _ -> true
+    case {a.block_number, b.block_number} do
+      {nil, nil} ->
+        # Both are pending, sort by block_timestamp, then inserted_at
+        compare_by_timestamp_then_inserted(a, b)
+
+      {nil, _} ->
+        false
+
+      {_, nil} ->
+        true
+
+      _ ->
+        case {
+          Helper.compare(a.block_number, b.block_number),
+          Helper.compare(a.index, b.index),
+          DateTime.compare(a.inserted_at, b.inserted_at),
+          Helper.compare(Hash.to_integer(a.hash), Hash.to_integer(b.hash))
+        } do
+          {:lt, _, _, _} -> false
+          {:eq, :lt, _, _} -> false
+          {:eq, :eq, :lt, _} -> false
+          {:eq, :eq, :eq, :gt} -> false
+          _ -> true
+        end
+    end
+  end
+
+  defp compare_by_timestamp_then_inserted(a, b) do
+    case {a.block_timestamp, b.block_timestamp} do
+      {nil, nil} ->
+        DateTime.compare(a.inserted_at, b.inserted_at) != :lt
+
+      {nil, _} ->
+        false
+
+      {_, nil} ->
+        true
+
+      {ts_a, ts_b} ->
+        case DateTime.compare(ts_a, ts_b) do
+          :gt -> true
+          :lt -> false
+          :eq -> DateTime.compare(a.inserted_at, b.inserted_at) != :lt
+        end
     end
   end
 
@@ -1645,13 +1704,39 @@ defmodule Explorer.Chain.Transaction do
     __MODULE__
     |> order_for_transactions(with_pending?)
     |> Chain.where_block_number_in_period(from_block, to_block)
+    |> exclude_duplicate_cosmos_transactions()
     |> handle_paging_options(paging_options)
   end
 
+  @doc """
+  Excludes Cosmos transactions that have a corresponding EVM transaction.
+  This prevents duplicate display in the explorer when the same transaction
+  is indexed through both the Cosmos fetcher and the EVM indexer.
+  A Cosmos transaction's alt_hash field contains the corresponding EVM transaction hash.
+  """
+  @spec exclude_duplicate_cosmos_transactions(Ecto.Query.t()) :: Ecto.Query.t()
+  def exclude_duplicate_cosmos_transactions(query) do
+    from(t in query,
+      as: :outer_tx,
+      where:
+        # Include all non-cosmos transactions
+        t.transaction_type != :cosmos or is_nil(t.transaction_type) or
+        # Include cosmos transactions that don't have an alt_hash (no EVM equivalent)
+        is_nil(t.alt_hash) or
+        # Include cosmos transactions where no EVM transaction exists with that alt_hash
+        not exists(
+          from(evm_tx in __MODULE__,
+            where: evm_tx.hash == parent_as(:outer_tx).alt_hash,
+            where: evm_tx.transaction_type != :cosmos or is_nil(evm_tx.transaction_type)
+          )
+        )
+    )
+  end
+
   @default_sorting [
+    desc: :block_timestamp,
     desc: :block_number,
     desc: :index,
-    desc: :inserted_at,
     asc: :hash
   ]
 
@@ -1677,16 +1762,17 @@ defmodule Explorer.Chain.Transaction do
   defp order_for_transactions(query, true) do
     query
     |> order_by([transaction],
+      desc_nulls_last: transaction.block_timestamp,
       desc: transaction.block_number,
       desc: transaction.index,
-      desc: transaction.inserted_at,
       asc: transaction.hash
     )
   end
 
   defp order_for_transactions(query, _) do
+    # Sort by block_timestamp to ensure proper chronological ordering
     query
-    |> order_by([transaction], desc: transaction.block_number, desc: transaction.index)
+    |> order_by([transaction], desc_nulls_last: transaction.block_timestamp, desc: transaction.block_number, desc: transaction.index)
   end
 
   @doc """
@@ -2103,7 +2189,7 @@ defmodule Explorer.Chain.Transaction do
   def method_name(_, _, skip_sc_check? \\ false)
 
   def method_name(_, {:ok, _method_id, text, _mapping}, _) do
-    parse_method_name(text, false)
+    parse_method_name(text, true)
   end
 
   def method_name(
